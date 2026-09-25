@@ -15,7 +15,7 @@ dos abiertos no se confundan.
 | Hoja | Qué es |
 |---|---|
 | **SAP** | La descarga de SAP. Es la fuente válida: el registro real de recepción. Se toma el material `3000043 · ASERRIN (TS)` |
-| **Informe** | Las planillas diarias del reservador, importadas desde Gmail. Completa los días que SAP todavía no tiene, con `camiones × 11,6 TS` |
+| **Informe** | Las planillas diarias del reservador, importadas desde Gmail. Completa los días que SAP todavía no tiene, con `camiones × carga promedio de SAP` |
 | **Plan** | `Proveedor · Precio · Cantidad`. Precio por TS y plan del mes en TS |
 | **Proyeccion** | (opcional) Camiones comprometidos por día hábil, igual que en astilla |
 | **Proveedores** | (se crea desde el menú) Tabla de equivalencias de nombres |
@@ -27,17 +27,31 @@ carga, o quedó como hueco— se completa con la planilla. Es por día
 completo y no por proveedor: mezclar las dos fuentes en un mismo día
 contaría dos veces los camiones que ya llegaron a SAP.
 
-### Factor del camión
+### Carga por camión: el promedio de SAP
 
-| Código SAP | Subproducto        | TS por camión |
-|-----------:|--------------------|--------------:|
-|    3000043 | ASERRÍN PINO VERDE |          11,6 |
+La planilla del reservador trae **camiones**, no toneladas. Cada camión
+se multiplica por la **carga promedio de las recepciones en SAP**: el
+promedio de la columna `Cantidad` de la hoja SAP (una fila = una
+recepción = un camión), material 3000043.
 
-11,6 es la mediana de TS por guía en la hoja SAP entre enero y
-septiembre de 2026 (promedio 11,58). Se cambia en
-`CONFIG.FACTOR_POR_MATERIAL` de `Codigo.gs`, y el cambio alcanza
-también a las filas ya importadas: la columna `Factor` de la hoja
-Informe es informativa.
+- Se toman las recepciones de los **últimos 90 días** con ingreso en
+  SAP (`CONFIG.FACTOR_SAP_DIAS`), para que siga al camión que está
+  llegando hoy y no al de principios de año.
+- Si en esa ventana hay menos de 20 recepciones
+  (`FACTOR_SAP_MIN_RECEPCIONES`), se usa toda la historia leída.
+- Si SAP está vacío, se usa `FACTOR_CAMION` (11,6) como respaldo.
+- Se recalcula cada vez que se abre el panel o se importa Gmail, y
+  alcanza también a las filas ya importadas: la columna `Factor` de la
+  hoja Informe queda como registro de con cuánto se importó, pero el
+  panel siempre usa el promedio vigente.
+
+Con la planilla al 23/09/2026: **10,68 TS por camión** (346
+recepciones del 26/06 al 23/09). El promedio de todo el año es 11,58;
+la diferencia es justo la razón de usar una ventana reciente. El panel
+lo muestra en la nota de arriba y en la tarjeta «Complemento
+estimado», y *Diagnosticar cruce* también lo informa.
+
+La misma carga convierte los camiones de la hoja `Proyeccion`.
 
 ### La hoja Plan
 

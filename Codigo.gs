@@ -18,7 +18,8 @@
  * - Un día con TS en SAP manda entero: su estimado se descarta.
  * - Un día que en SAP suma cero —porque aún no se carga, o quedó
  *   como hueco entre días ya cargados— se completa con la planilla:
- *   CAMIONES × el factor del aserrín (CONFIG.FACTOR_POR_MATERIAL).
+ *   CAMIONES × la carga promedio por recepción en SAP (el promedio
+ *   de la columna Cantidad; ver factorSap_).
  * - La decisión es por fecha completa y no por proveedor: dentro de un
  *   mismo día, mezclar las dos fuentes contaría dos veces los camiones
  *   que ya llegaron a SAP.
@@ -231,16 +232,23 @@ const CONFIG = Object.freeze({
   HTML_FILE: 'Index',
   TIMEZONE: 'America/Santiago',
 
-  // Toneladas secas por camión de aserrín. Sale de la hoja SAP: la
-  // mediana de lo recibido por guía entre enero y septiembre de 2026
-  // es 11,6 TS (promedio 11,58). Si cambia el tipo de camión, se
-  // cambia acá y alcanza también a las filas ya importadas: el factor
-  // lo decide el material, no la columna "Factor" de la hoja Informe,
-  // que es informativa.
+  // Toneladas secas por camión de aserrín: NO es un número fijo. Cada
+  // camión de la planilla se multiplica por la carga promedio de las
+  // recepciones de SAP —el promedio de la columna Cantidad, una fila
+  // por recepción— de los últimos FACTOR_SAP_DIAS días con ingreso.
+  // Se recalcula cada vez que se abre el panel o se importa Gmail, así
+  // que sigue solo al tipo de camión que esté llegando.
+  //
+  // Si en esa ventana hay menos de FACTOR_SAP_MIN_RECEPCIONES, se toma
+  // el promedio de toda la historia leída; si SAP está vacío, se usa
+  // FACTOR_CAMION como último respaldo.
+  //
+  // El factor lo decide SAP, no la columna "Factor" de la hoja
+  // Informe, que es informativa: el promedio vigente alcanza también a
+  // las filas importadas antes.
+  FACTOR_SAP_DIAS: 90,
+  FACTOR_SAP_MIN_RECEPCIONES: 20,
   FACTOR_CAMION: 11.6,
-  FACTOR_POR_MATERIAL: Object.freeze({
-    'ASERRÍN PINO VERDE': 11.6
-  }),
   UNIDAD: 'TS',
 
   // Historia que viaja al dashboard. Son DOS reglas y la ventana es
@@ -525,6 +533,10 @@ function getDashboardData() {
     homologacion
   );
 
+  // Carga promedio por camión según SAP. Tiene que estar antes de leer
+  // la planilla y la proyección: las dos convierten camiones a TS.
+  const factorSap = fijarFactorSap_(ingresos.rows);
+
   const informe = readInformeRows_(
     spreadsheet,
     timezone,
@@ -583,8 +595,9 @@ function getDashboardData() {
     ),
     timezone: timezone,
     unidad: CONFIG.UNIDAD,
-    factor: CONFIG.FACTOR_CAMION,
-    factorPorMaterial: CONFIG.FACTOR_POR_MATERIAL,
+    factor: factorSap.promedio,
+    factorPorMaterial: factorPorMaterial_(),
+    factorSap: factorSap,
     month: month,
     workdays: workdays,
     holidays: CONFIG.FERIADOS.slice(),
@@ -3646,6 +3659,10 @@ function importarPlanillas_(rebuild) {
       rebuild
     );
 
+    // Los camiones se escriben ya convertidos con la carga promedio
+    // vigente de SAP (columna informativa: el panel la recalcula).
+    factorDesdeSap_(spreadsheet);
+
     const processedIds = rebuild
       ? {}
       : getProcessedMessageIds_(sheet);
@@ -3907,6 +3924,8 @@ function matchesSubject_(subject) {
  * hoja. Conviene correrlo antes de una carga masiva.
  */
 function probarUltimoCorreo() {
+  factorDesdeSap_(SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID));
+
   const threads = GmailApp.search(buildGmailQuery_(), 0, 10);
   const candidates = [];
 
@@ -4034,6 +4053,9 @@ function diagnosticarCruce() {
       data.source.staleReports,
     'Días sin TS en SAP completados con la planilla: ' +
       ((data.source.huecosLabel || []).join(', ') || 'ninguno'),
+    'Carga promedio por camión (SAP): ' + data.factorSap.promedio +
+      ' TS · ' + data.factorSap.recepciones + ' recepciones · ' +
+      data.factorSap.ventana,
     'Correos con error de lectura: ' + data.source.errors,
     'Cobertura de precio: ' + round_((data.pricing.coverage || 0) * 100, 1) + '%',
     'TS sin precio homologado: ' + round_(data.pricing.unpricedTs || 0, 1),
@@ -4641,15 +4663,112 @@ function parsePlanillaText_(body) {
  * plural, "C/ CORTEZA" vs "CON CORTEZA", tildes y espacios dobles.
  * Si el correo usa un nombre muy distinto, agrégalo aquí.
  */
+/* =====================================================================
+ * CARGA PROMEDIO POR CAMIÓN, SEGÚN SAP
+ *
+ * La planilla del reservador dice camiones, no toneladas. Cada camión
+ * se convierte con lo que de verdad pesa un camión de aserrín al
+ * llegar: el promedio de Cantidad de las recepciones de SAP. Una fila
+ * de SAP es una recepción (una guía, un camión).
+ * ===================================================================== */
+
+let FACTOR_SAP = null;
+
 /**
- * Toneladas secas por camión del material. Si el subproducto no está
- * en la tabla se usa el factor general, que es lo que había antes.
+ * Calcula el promedio con las filas de SAP ya leídas y lo deja fijo
+ * para el resto de la ejecución (factorDe_ lo usa).
+ */
+function fijarFactorSap_(ingresosRows) {
+  const filas = (ingresosRows || []).filter(function(item) {
+    return (Number(item.ts) || 0) > 0;
+  });
+
+  const ultima = filas.reduce(function(max, item) {
+    return item.fecha > max ? item.fecha : max;
+  }, '');
+
+  const desde = ultima
+    ? addDaysToDateKey_(ultima, -(Number(CONFIG.FACTOR_SAP_DIAS) - 1))
+    : '';
+
+  let usadas = filas.filter(function(item) {
+    return item.fecha >= desde;
+  });
+  let ventana = CONFIG.FACTOR_SAP_DIAS + ' días';
+
+  // Pocas recepciones recientes: un promedio de tres camiones no dice
+  // nada. Se usa toda la historia leída.
+  if (usadas.length < CONFIG.FACTOR_SAP_MIN_RECEPCIONES) {
+    usadas = filas;
+    ventana = 'toda la historia';
+  }
+
+  if (!usadas.length) {
+    FACTOR_SAP = {
+      promedio: CONFIG.FACTOR_CAMION,
+      recepciones: 0,
+      desde: '',
+      hasta: '',
+      ventana: 'sin datos en SAP: factor de respaldo'
+    };
+    return FACTOR_SAP;
+  }
+
+  const total = usadas.reduce(function(suma, item) {
+    return suma + Number(item.ts);
+  }, 0);
+
+  const fechas = usadas.map(function(item) { return item.fecha; }).sort();
+
+  FACTOR_SAP = {
+    promedio: round_(total / usadas.length, 3),
+    recepciones: usadas.length,
+    desde: fechas[0],
+    hasta: fechas[fechas.length - 1],
+    ventana: ventana
+  };
+
+  return FACTOR_SAP;
+}
+
+/**
+ * Lo mismo, leyendo SAP por su cuenta. Para la importación de Gmail y
+ * la prueba del último correo, que no pasan por getDashboardData().
+ */
+function factorDesdeSap_(spreadsheet) {
+  const timezone =
+    spreadsheet.getSpreadsheetTimeZone() || CONFIG.TIMEZONE;
+  const month = getCurrentMonthWindow_(timezone);
+
+  const ingresos = readIngresos_(
+    spreadsheet,
+    timezone,
+    buildHistoryStart_(month),
+    leerProveedores_(spreadsheet)
+  );
+
+  return fijarFactorSap_(ingresos.rows);
+}
+
+function factorPorMaterial_() {
+  const tabla = {};
+
+  SUBPRODUCTOS_OBJETIVO.forEach(function(name) {
+    tabla[name] = factorDe_(name);
+  });
+
+  return tabla;
+}
+
+/**
+ * Toneladas secas por camión: la carga promedio de SAP. Hay un solo
+ * subproducto, así que el argumento se conserva solo por compatibilidad
+ * con quienes lo llaman.
  */
 function factorDe_(subproducto) {
-  const clave = text_(subproducto);
-  const tabla = CONFIG.FACTOR_POR_MATERIAL || {};
-
-  return tabla[clave] || CONFIG.FACTOR_CAMION;
+  return FACTOR_SAP && FACTOR_SAP.promedio > 0
+    ? FACTOR_SAP.promedio
+    : CONFIG.FACTOR_CAMION;
 }
 
 function canonicalSubproducto_(value) {

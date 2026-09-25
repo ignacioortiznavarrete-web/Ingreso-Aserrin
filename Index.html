@@ -4036,7 +4036,7 @@
           '</b>. Del <b>' + esc(source.supplementStartLabel) + '</b> al <b>' +
           esc(source.latestReportDateLabel) + '</b> se complementan <b>' +
           formatInteger(source.supplementCamiones) + ' camiones</b>, ' +
-          'convertidos a TS con el factor de cada material (' +
+          'convertidos a TS con la carga promedio por camión según SAP (' +
           esc(factoresLegibles()) + '). ' +
           'El estimado desaparece solo cuando la fecha aparece en ' +
           'SAP con TS.'
@@ -12640,17 +12640,21 @@
 
     /** "15,2 / 10,7 / 11 según material" */
     function factoresLegibles() {
-      var tabla = (DATA && DATA.factorPorMaterial) || {};
-      var nombres = Object.keys(tabla);
+      var f = (DATA && DATA.factorSap) || null;
+      var promedio = f ? f.promedio : ((DATA && DATA.factor) || 11.6);
+      var cifra = Number(promedio).toLocaleString('es-CL', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2
+      }) + ' TS/camión';
 
-      if (!nombres.length) {
-        return formatQuantity((DATA && DATA.factor) || 11) + ' TS';
+      if (!f || !f.recepciones) {
+        return cifra + ', factor de respaldo: SAP sin recepciones';
       }
 
-      return nombres.map(function(n) {
-        return formatQuantity(tabla[n]) + ' ' +
-          shortProduct(n).toLowerCase();
-      }).join(' · ');
+      return cifra + ', promedio de ' +
+        formatInteger(f.recepciones) + ' recepciones SAP' +
+        (f.ventana === 'toda la historia'
+          ? ' de toda la historia'
+          : ' de los últimos ' + f.ventana);
     }
 
     /** Para buscar sin que estorben tildes ni mayúsculas. */
