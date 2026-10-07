@@ -4378,8 +4378,23 @@ function parseGridRows_(grid) {
     break;
   }
 
+  // Sin fila de encabezado: algunos correos traen la tabla empezando
+  // directo en la fecha y el primer «Total», con las columnas en el
+  // mismo orden de siempre —FECHA · SUBPRODUCTO · PROVEEDOR · DESTINO ·
+  // CAMIONES—. Ahí las columnas se ubican por posición.
   if (headerIndex === -1) {
-    return empty;
+    const posicion = columnasSinEncabezado_(grid);
+
+    if (!posicion) {
+      return empty;
+    }
+
+    headerIndex = posicion.inicio - 1;
+    fechaColumn = posicion.fecha;
+    subproductoColumn = posicion.subproducto;
+    proveedorColumn = posicion.proveedor;
+    destinoColumn = posicion.destino;
+    cantidadColumn = posicion.cantidad;
   }
 
   if (subproductoColumn === -1) {
@@ -4460,6 +4475,83 @@ function parseGridRows_(grid) {
   }
 
   return { rows: rows, fecha: fecha };
+}
+
+/**
+ * Ubica las columnas de una planilla que llegó SIN fila de encabezado.
+ *
+ * El orden es el de siempre: FECHA · SUBPRODUCTO · PROVEEDOR · DESTINO
+ * · CAMIONES. Lo que puede cambiar es dónde empieza (una celda vacía
+ * antes, una combinada), así que no se fija la columna 0: se busca la
+ * columna donde aparecen los rótulos de grupo —"ASERRÍN PINO VERDE",
+ * "Total ASERRÍN COMBUSTIBLE"— y las demás se cuentan desde ahí.
+ *
+ * Para darlo por bueno, al menos una fila de detalle tiene que traer
+ * proveedor y un número de camiones en su lugar. Si no, no es la
+ * planilla y se devuelve null en vez de inventar filas.
+ */
+function columnasSinEncabezado_(grid) {
+  const esRotulo = function(celda) {
+    const key = normalizeKey_(celda);
+
+    return /^(TOTAL\s+)?(AST|ASTILLA|ASTILLAS|ASERRIN|ASERRINES|CORTEZA)\b/
+      .test(key);
+  };
+
+  const votos = {};
+
+  for (let r = 0; r < Math.min(grid.length, 60); r++) {
+    const row = grid[r] || [];
+
+    for (let c = 0; c < row.length; c++) {
+      if (esRotulo(row[c])) {
+        votos[c] = (votos[c] || 0) + 1;
+        break;
+      }
+    }
+  }
+
+  const columnas = Object.keys(votos);
+
+  if (!columnas.length) {
+    return null;
+  }
+
+  const subproducto = Number(columnas.sort(function(a, b) {
+    return votos[b] - votos[a];
+  })[0]);
+
+  const proveedor = subproducto + 1;
+  const destino = subproducto + 2;
+  const cantidad = subproducto + 3;
+
+  const valida = grid.some(function(row) {
+    const prov = text_((row || [])[proveedor]);
+    const n = parseOptionalNumber_((row || [])[cantidad]);
+
+    return (
+      prov &&
+      !isTotalText_(prov) &&
+      n !== null &&
+      isFinite(n) &&
+      n > 0
+    );
+  });
+
+  if (!valida) {
+    return null;
+  }
+
+  // La fecha viene en la columna anterior a la de los rótulos, en la
+  // primera fila de la tabla, así que la lectura arranca desde arriba.
+  return {
+    inicio: 0,
+    fecha: subproducto > 0 ? subproducto - 1 : -1,
+    subproducto: subproducto,
+    proveedor: proveedor,
+    destino: destino,
+    cantidad: cantidad
+  };
 }
 
 /**

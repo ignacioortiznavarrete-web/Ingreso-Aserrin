@@ -89,6 +89,15 @@ filas del grupo ASERRÍN PINO VERDE**; astillas, corteza y cualquier
 otro grupo se ignoran. Las filas «Total…» y las que vienen sin
 proveedor se ignoran siempre: son sumas y duplicarían los camiones.
 
+La tabla puede venir **con o sin fila de encabezado**. Hay correos
+(por ejemplo el del 06/10/2026) que empiezan directo en la fecha y el
+primer «Total», sin `FECHA · PROVEEDORES · PRODUCTOS` arriba. En ese
+caso las columnas se ubican por posición, con el orden de siempre:
+fecha · subproducto · proveedor · destino · camiones. La columna de
+subproducto se reconoce por los rótulos de grupo (`ASERRÍN PINO VERDE`,
+`Total ASERRÍN COMBUSTIBLE`…), así que una columna vacía de más al
+principio no la descuadra.
+
 Se acepta el rótulo con o sin tilde y en sus variantes (`ASERRIN PINO
 VERDE`, `Aserrín P. Verde`, `ASERRIN`, `ASERRIN (TS)`); se rechaza el
 que diga seco, combustible o eucalipto.
