@@ -98,6 +98,12 @@ subproducto se reconoce por los rótulos de grupo (`ASERRÍN PINO VERDE`,
 `Total ASERRÍN COMBUSTIBLE`…), así que una columna vacía de más al
 principio no la descuadra.
 
+Las **celdas combinadas** también se respetan. Cuando la planilla se
+pega desde Excel, la fecha y el nombre del grupo llegan como una sola
+celda que abarca varias filas (aunque Gmail las dibuje separadas); sin
+contarlas, del grupo solo entraba el primer proveedor. Si la tabla
+viene dentro de otra tabla de diseño de Outlook, se lee igual.
+
 Se acepta el rótulo con o sin tilde y en sus variantes (`ASERRIN PINO
 VERDE`, `Aserrín P. Verde`, `ASERRIN`, `ASERRIN (TS)`); se rechaza el
 que diga seco, combustible o eucalipto.
@@ -193,6 +199,7 @@ clasp push
 ## Pruebas
 
 ```
+node pruebas/planilla.js
 node alertas/pruebas/prueba.js
 node alertas/pruebas/feriados.js
 ```

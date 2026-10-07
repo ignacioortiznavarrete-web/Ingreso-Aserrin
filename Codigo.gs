@@ -5180,40 +5180,112 @@ function getCurrentMonthWindow_(timezone) {
   };
 }
 
+/**
+ * Convierte las tablas del correo en una matriz de celdas.
+ *
+ * Respeta las celdas combinadas. Una planilla pegada desde Excel trae
+ * la fecha y el nombre del grupo («ASERRÍN PINO VERDE») como una sola
+ * celda con rowspan, aunque Gmail las dibuje como celdas sueltas. Sin
+ * contar el rowspan, las filas de abajo llegaban corridas una columna a
+ * la izquierda —el proveedor caía donde va el subproducto— y del grupo
+ * solo entraba el primer proveedor. Lo que ocupa una celda combinada se
+ * rellena con '' en su posición: así el grupo sigue arrastrándose hacia
+ * abajo y la fecha o el total no se repiten.
+ *
+ * Outlook suele envolver la tabla en otras tablas de diseño. Se leen
+ * las tablas de adentro hacia afuera, cada una por separado, para que
+ * una tabla anidada no parta las filas de la otra. Las celdas ocultas
+ * (display:none) que deja Excel se saltan.
+ */
 function extractHtmlTableRows_(html) {
+  let resto = String(html || '');
   const rows = [];
+  const tablaInterior = /<table\b[^>]*>((?:(?!<table\b)[\s\S])*?)<\/table>/i;
+
+  let match;
+  let vueltas = 0;
+
+  while ((match = tablaInterior.exec(resto)) !== null && vueltas < 50) {
+    vueltas++;
+    tablaAMatriz_(match[1]).forEach(function(row) { rows.push(row); });
+    resto =
+      resto.slice(0, match.index) +
+      resto.slice(match.index + match[0].length);
+  }
+
+  // Filas sueltas fuera de cualquier <table> (HTML mal cerrado).
+  if (!rows.length) {
+    return tablaAMatriz_(resto);
+  }
+
+  return rows;
+}
+
+function tablaAMatriz_(html) {
+  const rows = [];
+  const pendientes = {}; // columna → filas que todavía ocupa un rowspan
   const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
 
   let rowMatch;
 
-  while (
-    (rowMatch = rowRegex.exec(String(html || ''))) !== null
-  ) {
+  while ((rowMatch = rowRegex.exec(String(html || ''))) !== null) {
     const cells = [];
     const cellRegex =
-      /<(?:td|th)\b([^>]*)>([\s\S]*?)<\/(?:td|th)>/gi;
+      /<(td|th)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
 
-    let cellMatch;
+    let col = 0;
 
-    while (
-      (cellMatch = cellRegex.exec(rowMatch[1])) !== null
-    ) {
-      cells.push(cleanHtmlCell_(cellMatch[2]));
-
-      const colspan = Number(
-        (cellMatch[1].match(
-          /colspan\s*=\s*["']?(\d+)/i
-        ) || [])[1] || 1
-      );
-
-      // Rellena lo que ocupa un colspan para no desalinear los
-      // índices detectados en el encabezado.
-      for (let extra = 1; extra < colspan; extra++) {
-        cells.push('');
+    function saltarOcupadas() {
+      while (pendientes[col] > 0) {
+        cells[col] = '';
+        pendientes[col]--;
+        col++;
       }
     }
 
-    if (cells.length) {
+    let cellMatch;
+
+    while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+      const atributos = cellMatch[2] || '';
+
+      if (/display\s*:\s*none/i.test(atributos)) {
+        continue;
+      }
+
+      saltarOcupadas();
+
+      const colspan = Math.max(1, Number(
+        (atributos.match(/colspan\s*=\s*["']?(\d+)/i) || [])[1] || 1
+      ));
+      const rowspan = Math.max(1, Number(
+        (atributos.match(/rowspan\s*=\s*["']?(\d+)/i) || [])[1] || 1
+      ));
+
+      cells[col] = cleanHtmlCell_(cellMatch[3]);
+
+      for (let k = 0; k < colspan; k++) {
+        if (k > 0) { cells[col + k] = ''; }
+        if (rowspan > 1) { pendientes[col + k] = rowspan - 1; }
+      }
+
+      col += colspan;
+    }
+
+    // Celdas combinadas que siguen ocupando columnas a la derecha.
+    Object.keys(pendientes).forEach(function(clave) {
+      const c = Number(clave);
+
+      if (c >= col && pendientes[c] > 0) {
+        cells[c] = '';
+        pendientes[c]--;
+      }
+    });
+
+    for (let c = 0; c < cells.length; c++) {
+      if (cells[c] === undefined) { cells[c] = ''; }
+    }
+
+    if (cells.some(function(cell) { return cell !== ''; })) {
       rows.push(cells);
     }
   }
